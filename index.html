@@ -607,7 +607,7 @@ function renderWeek(){
  el('#v-week').innerHTML=h;
 }
 
-let gEvents=null,gBusy=false;
+let gEvents=null,gBusy=false,calRange=3;
 function gtok(){try{const o=JSON.parse(localStorage.getItem('r90.gtok'));if(o&&o.exp>Date.now()+30000)return o.t}catch(e){}return null}
 function loadGsi(cb){
  if(window.google&&window.google.accounts){cb();return}
@@ -680,23 +680,62 @@ function renderCal(){
   '<button class="btn" data-act="gcidreset">Change Client ID</button></div>';
   box.innerHTML=h;return;
  }
- if(!gEvents.length)h+='<div class="empty"><div class="frx">No events in the next 60 days</div><div class="sub">Tap + Event to create one.</div></div>';
+ const t=today();
+ const maxDay=iso(new Date(p(t).getTime()+(calRange-1)*DAY));
+ h+='<div class="chips" style="margin:0 16px 6px">'+
+  [[3,'3 days'],[7,'Week'],[30,'Month']].map(o=>'<button class="selchip'+(calRange===o[0]?' on':'')+'" data-act="calrange" data-v="'+o[0]+'">'+o[1]+'</button>').join('')+'</div>';
+ const shown=gEvents.filter(ev=>{const d=((ev.start&&(ev.start.dateTime||ev.start.date))||'').slice(0,10);return d&&d>=t&&d<=maxDay});
+ if(!shown.length)h+='<div class="empty"><div class="frx">Nothing in the next '+calRange+' days</div><div class="sub">Tap + Event to create one.</div></div>';
  else{
   let lastD='';
-  gEvents.forEach(ev=>{
+  shown.forEach(ev=>{
    const sd=(ev.start&&(ev.start.dateTime||ev.start.date))||'';
    const day=sd.slice(0,10);if(!day)return;
    if(day!==lastD){lastD=day;
-    h+='<div class="seclbl"'+(day===today()?' style="color:var(--a1)"':'')+'>'+(day===today()?'Today':WD[p(day).getDay()].slice(0,3))+' · '+fmtD(day)+'</div>';}
+    h+='<div class="seclbl"'+(day===t?' style="color:var(--a1)"':'')+'>'+(day===t?'Today':WD[p(day).getDay()].slice(0,3))+' · '+fmtD(day)+'</div>';}
    const tm=ev.start.dateTime?sd.slice(11,16)+(ev.end&&ev.end.dateTime?' – '+ev.end.dateTime.slice(11,16):''):'All day';
-   h+='<div class="tk" data-noswipe="1" data-act="evedit" data-id="'+esc(ev.id)+'"><div class="bd">'+
+   const na=(ev.attendees||[]).length;
+   h+='<div class="tk" data-noswipe="1" data-act="evdetail" data-id="'+esc(ev.id)+'"><div class="bd">'+
    '<div class="tt">'+esc(ev.summary||'(no title)')+'</div>'+
-   '<div class="mt" style="color:var(--a1)">'+tm+(ev.location?' · '+esc(ev.location):'')+'</div></div></div>';
+   '<div class="mt" style="color:var(--a1)">'+tm+(ev.location?' · '+esc(ev.location):'')+(na?' · '+na+' guest'+(na>1?'s':''):'')+'</div></div>'+
+   '<span class="ic"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span></div>';
   });
  }
  h+='<div style="margin:8px 16px 0"><button class="btn" data-act="grefresh">Refresh</button>'+
  '<button class="btn" data-act="gsignout">Sign out</button></div>';
  box.innerHTML=h;
+}
+function attStatus(s){
+ return s==='accepted'?['✓','going','var(--green)']:s==='declined'?['✗','declined','var(--red)']:
+  s==='tentative'?['~','maybe','var(--yellow)']:['•','invited','var(--sub)'];
+}
+function openEventDetail(id){
+ const ev=(gEvents||[]).find(e=>e.id===id);if(!ev){toast('Event not found');return}
+ const sd=ev.start.dateTime||ev.start.date;
+ const timed=!!ev.start.dateTime;
+ const when=(sd.slice(0,10)===today()?'Today · ':WD[p(sd.slice(0,10)).getDay()]+' · ')+fmtD(sd.slice(0,10))+
+  (timed?' · '+sd.slice(11,16)+(ev.end&&ev.end.dateTime?' – '+ev.end.dateTime.slice(11,16):''):' · All day');
+ const org=ev.organizer||ev.creator;
+ const orgName=org?(org.self?'You':(org.displayName||org.email)):null;
+ const guests=(ev.attendees||[]).filter(a=>!a.resource);
+ let h='<div class="seclbl" style="margin:0 0 6px">Event</div>'+
+  '<div class="frx" style="font-size:22px;font-weight:700;line-height:1.15;margin-bottom:6px">'+esc(ev.summary||'(no title)')+'</div>'+
+  '<div style="color:var(--a1);font-size:14px;margin-bottom:10px">'+esc(when)+'</div>';
+ if(ev.location)h+='<div class="ml" style="border:none;padding:6px 0"><div class="dt" style="min-width:64px">Where</div><div style="flex:1">'+esc(ev.location)+'</div></div>';
+ if(orgName)h+='<div class="ml" style="border:none;padding:6px 0"><div class="dt" style="min-width:64px">Set by</div><div style="flex:1">'+esc(orgName)+(org.email&&!org.self?' <span class="faint">'+esc(org.email)+'</span>':'')+'</div></div>';
+ if(guests.length){
+  h+='<div class="seclbl" style="margin:12px 0 4px">Guests · '+guests.length+'</div>'+
+  '<div style="background:var(--s1);border-radius:12px;padding:4px 14px;margin-bottom:6px">'+
+  guests.map(a=>{const st=attStatus(a.responseStatus);
+   return'<div class="ml" style="align-items:center"><div style="width:20px;color:'+st[2]+';font-weight:700;text-align:center">'+st[0]+'</div>'+
+   '<div style="flex:1">'+esc(a.self?'You':(a.displayName||a.email))+(a.organizer?' <span class="faint">· organizer</span>':'')+'</div>'+
+   '<div class="faint" style="color:'+st[2]+'">'+st[1]+'</div></div>'}).join('')+'</div>';
+ }
+ if(ev.description)h+='<div class="seclbl" style="margin:12px 0 4px">Notes</div><div class="sub" style="margin-bottom:6px;white-space:pre-wrap">'+esc(ev.description.replace(/<[^>]+>/g,''))+'</div>';
+ h+='<div class="row2"><button class="btn" data-act="evedit" data-id="'+esc(ev.id)+'">Edit</button>'+
+  (ev.htmlLink?'<button class="btn" data-act="evopen" data-id="'+esc(ev.id)+'">Open in Google</button>':'')+'</div>'+
+  '<button class="btn dng" data-act="evdel" data-id="'+esc(ev.id)+'">Delete event</button>';
+ openSheet(h);
 }
 function openEvent(id){
  const ev=id?(gEvents||[]).find(e=>e.id===id):null;
@@ -1216,6 +1255,9 @@ document.addEventListener('click',e=>{
  else if(act==='gsignin'||act==='grefresh')loadEvents();
  else if(act==='gsignout'){localStorage.removeItem('r90.gtok');gEvents=null;renderCal();toast('Signed out')}
  else if(act==='newev')openEvent(null);
+ else if(act==='calrange'){calRange=+b.dataset.v||3;renderCal()}
+ else if(act==='evdetail')openEventDetail(id);
+ else if(act==='evopen'){const ev=(gEvents||[]).find(e=>e.id===id);if(ev&&ev.htmlLink)window.open(ev.htmlLink,'_blank')}
  else if(act==='evedit')openEvent(id);
  else if(act==='evsave')evSave(id||null);
  else if(act==='evdel')evDel(id);
